@@ -1,0 +1,117 @@
+name: Process Wallpapers
+
+on:
+  repository_dispatch:
+    types: [process-wallpapers]
+  workflow_dispatch:
+    inputs:
+      commit_message:
+        description: '提交信息'
+        required: false
+        default: 'chore: update wallpapers'
+
+env:
+  IMAGE_REPO: IT-NuanxinPro/nuanXinProPic
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout workflow repo
+        uses: actions/checkout@v4
+      
+      - name: Checkout image repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.IMAGE_REPO }}
+          token: ${{ secrets.PAT_TOKEN }}
+          path: nuanXinProPic
+          fetch-depth: 0
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      
+      - name: Install dependencies
+        run: |
+          # ImageMagick
+          sudo apt-get update
+          sudo apt-get install -y imagemagick fonts-noto-cjk
+          
+          # 配置 ImageMagick 策略
+          sudo sed -i 's/<policy domain="resource" name="memory" value="256MiB"\/>/<policy domain="resource" name="memory" value="2GiB"\/>/g' /etc/ImageMagick-6/policy.xml || true
+          sudo sed -i 's/<policy domain="resource" name="disk" value="1GiB"\/>/<policy domain="resource" name="disk" value="8GiB"\/>/g' /etc/ImageMagick-6/policy.xml || true
+      
+      - name: Process new images
+        id: process
+        run: |
+          chmod +x scripts/*.sh
+          ./scripts/process-new-images.sh nuanXinProPic
+          
+          # 读取处理数量
+          if [ -f /tmp/processed_count.txt ]; then
+            COUNT=$(cat /tmp/processed_count.txt)
+            echo "count=$COUNT" >> $GITHUB_OUTPUT
+            [ "$COUNT" -gt 0 ] && echo "has_new=true" >> $GITHUB_OUTPUT || echo "has_new=false" >> $GITHUB_OUTPUT
+          else
+            echo "count=0" >> $GITHUB_OUTPUT
+            echo "has_new=false" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Create release
+        if: steps.process.outputs.has_new == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          # 获取提交信息
+          if [ -n "${{ github.event.inputs.commit_message }}" ]; then
+            MSG="${{ github.event.inputs.commit_message }}"
+          elif [ -n "${{ github.event.client_payload.message }}" ]; then
+            MSG="${{ github.event.client_payload.message }}"
+          else
+            MSG="chore: update wallpapers [$(TZ='Asia/Shanghai' date +'%Y-%m-%d')]"
+          fi
+          
+          ./scripts/create-release.sh nuanXinProPic "$MSG"
+      
+      - name: Update timestamps
+        if: steps.process.outputs.has_new == 'true'
+        run: |
+          NEW_TAG=$(cat /tmp/new_tag.txt 2>/dev/null || echo "")
+          ./scripts/update-timestamps.sh nuanXinProPic "$NEW_TAG"
+          
+          # 提交时间戳更新
+          cd nuanXinProPic
+          if [ -n "$(git status --porcelain timestamps-backup-all.txt)" ]; then
+            git add timestamps-backup-all.txt
+            git commit -m "chore: update timestamps for $NEW_TAG"
+            git push
+          fi
+      
+      - name: Generate data files
+        if: steps.process.outputs.has_new == 'true'
+        working-directory: nuanXinProPic
+        run: |
+          if [ -f "scripts/generate-data.js" ]; then
+            node scripts/generate-data.js
+            
+            if [ -n "$(git status --porcelain public/)" ]; then
+              git add public/
+              git commit -m "chore: update data files"
+              git push
+            fi
+          fi
+      
+      - name: Summary
+        run: |
+          echo "## 🎉 Workflow Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ steps.process.outputs.has_new }}" == "true" ]; then
+            echo "- ✅ Processed **${{ steps.process.outputs.count }}** new images" >> $GITHUB_STEP_SUMMARY
+            echo "- ✅ Created release" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- ℹ️ No new images to process" >> $GITHUB_STEP_SUMMARY
+          fi
