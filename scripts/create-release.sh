@@ -205,7 +205,7 @@ $commit_msg
 *自动发布 by GitHub Actions*"
 
         gh release create "$new_tag" \
-            --title "🎨 壁纸同步 - $today ($new_tag)" \
+            --title "$new_tag" \
             --notes "$body" \
             --latest
 
