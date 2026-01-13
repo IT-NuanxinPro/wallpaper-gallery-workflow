@@ -74,7 +74,10 @@ jobs:
             MSG="chore: update wallpapers [$(TZ='Asia/Shanghai' date +'%Y-%m-%d')]"
           fi
           
-          ./scripts/create-release.sh nuanXinProPic "$MSG"
+          # 获取发布者
+          PUBLISHER="${{ github.event.client_payload.publisher }}"
+          
+          ./scripts/create-release.sh nuanXinProPic "$MSG" "$PUBLISHER"
       
       - name: Update timestamps
         if: steps.process.outputs.has_new == 'true'

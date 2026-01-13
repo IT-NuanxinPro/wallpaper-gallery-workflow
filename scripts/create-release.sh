@@ -33,6 +33,7 @@ update_stats() {
     local added_mobile="$7"
     local added_avatar="$8"
     local today="$9"
+    local publisher="${10}"
 
     # 如果 stats.json 不存在，创建初始结构
     if [ ! -f "$stats_file" ]; then
@@ -41,7 +42,7 @@ update_stats() {
 
     # 使用 jq 更新（如果可用），否则用 node
     if command -v jq &>/dev/null; then
-        local new_release="{\"tag\":\"$new_tag\",\"date\":\"$today\",\"added\":{\"desktop\":$added_desktop,\"mobile\":$added_mobile,\"avatar\":$added_avatar}}"
+        local new_release="{\"tag\":\"$new_tag\",\"date\":\"$today\",\"added\":{\"desktop\":$added_desktop,\"mobile\":$added_mobile,\"avatar\":$added_avatar},\"publisher\":\"$publisher\"}"
         
         jq --argjson release "$new_release" \
            --argjson desktop "$desktop_count" \
@@ -56,7 +57,7 @@ const stats = JSON.parse(fs.readFileSync('$stats_file', 'utf8'));
 stats.total = { desktop: $desktop_count, mobile: $mobile_count, avatar: $avatar_count };
 stats.lastUpdated = new Date().toISOString();
 stats.releases = [
-  { tag: '$new_tag', date: '$today', added: { desktop: $added_desktop, mobile: $added_mobile, avatar: $added_avatar } },
+  { tag: '$new_tag', date: '$today', added: { desktop: $added_desktop, mobile: $added_mobile, avatar: $added_avatar }, publisher: '$publisher' },
   ...(stats.releases || [])
 ].slice(0, 50);
 fs.writeFileSync('$stats_file', JSON.stringify(stats, null, 2));
@@ -72,11 +73,23 @@ fs.writeFileSync('$stats_file', JSON.stringify(stats, null, 2));
 main() {
     local project_root="${1:-.}"
     local commit_msg="${2:-chore: update wallpapers [$(TZ='Asia/Shanghai' date +'%Y-%m-%d')]}"
+    local publisher="${3:-}"
 
     cd "$project_root"
 
-    # 检查是否有更改
-    if [ -z "$(git status --porcelain)" ]; then
+    # 检查是否有更改（包括未暂存的更改）
+    # 同时检查 /tmp/processed_count.txt 是否有处理过的图片
+    local has_changes=false
+    if [ -n "$(git status --porcelain)" ]; then
+        has_changes=true
+    elif [ -f /tmp/processed_count.txt ]; then
+        local processed_count=$(cat /tmp/processed_count.txt)
+        if [ "$processed_count" -gt 0 ] 2>/dev/null; then
+            has_changes=true
+        fi
+    fi
+
+    if [ "$has_changes" = false ]; then
         echo -e "${YELLOW}没有检测到更改，无需发布${NC}"
         exit 0
     fi
@@ -144,7 +157,7 @@ main() {
 
     # 更新 stats.json
     update_stats "$stats_file" "$new_tag" "$desktop_count" "$mobile_count" "$avatar_count" \
-                 "$added_desktop" "$added_mobile" "$added_avatar" "$today"
+                 "$added_desktop" "$added_mobile" "$added_avatar" "$today" "$publisher"
 
     # 配置 git
     git config user.name "github-actions[bot]"

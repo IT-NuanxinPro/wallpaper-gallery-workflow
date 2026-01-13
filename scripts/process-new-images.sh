@@ -74,7 +74,8 @@ get_new_images_by_git() {
     echo -e "${GREEN}  ⚡ 基于 Git diff 检测 (对比 $latest_tag)${NC}" >&2
     
     # 获取新增的图片文件（只检测 wallpaper 目录下的图片）
-    git diff --name-only --diff-filter=A "$latest_tag"..HEAD -- 'wallpaper/*.jpg' 'wallpaper/*.jpeg' 'wallpaper/*.png' 'wallpaper/**/*.jpg' 'wallpaper/**/*.jpeg' 'wallpaper/**/*.png' 2>/dev/null || true
+    # 使用 -z 选项避免中文路径被转义，然后用 tr 转换为换行符
+    git diff --name-only -z --diff-filter=A "$latest_tag"..HEAD -- 'wallpaper/*.jpg' 'wallpaper/*.jpeg' 'wallpaper/*.png' 'wallpaper/**/*.jpg' 'wallpaper/**/*.jpeg' 'wallpaper/**/*.png' 2>/dev/null | tr '\0' '\n' || true
     
     cd - > /dev/null
 }
