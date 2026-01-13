@@ -8,7 +8,7 @@
 - 🖼️ 自动生成缩略图（带水印）和预览图
 - 🏷️ 自动创建版本 Tag 和 GitHub Release
 - 📝 自动更新时间戳文件
-- 📊 自动生成 JSON 数据文件
+- 👤 记录发布者信息到 stats.json
 
 ## 项目结构
 
@@ -38,10 +38,10 @@ wallpaper-gallery-workflow/
 
 ### create-release.sh
 
-自动递增版本号，创建 tag 和 GitHub Release：
+自动递增版本号，创建 tag 和 GitHub Release，记录发布者信息：
 
 ```bash
-./scripts/create-release.sh <图床仓库路径> [提交信息]
+./scripts/create-release.sh <图床仓库路径> [提交信息] [发布者]
 ```
 
 ### update-timestamps.sh
@@ -65,7 +65,7 @@ curl -X POST \
   -H "Authorization: token YOUR_PAT_TOKEN" \
   -H "Accept: application/vnd.github.v3+json" \
   https://api.github.com/repos/IT-NuanxinPro/wallpaper-gallery-workflow/dispatches \
-  -d '{"event_type":"process-wallpapers","client_payload":{"message":"feat: 新增壁纸"}}'
+  -d '{"event_type":"process-wallpapers","client_payload":{"message":"feat: 新增壁纸","publisher":"username"}}'
 ```
 
 ## 配置
@@ -89,8 +89,10 @@ curl -X POST \
 ## 工作流程
 
 ```
-上传管理系统 → 触发工作流 → 检测新图片 → 生成缩略图/预览图 → 创建 Tag/Release → 更新时间戳 → 生成数据文件
+上传管理系统 → 触发工作流(含发布者) → 检测新图片 → 生成缩略图/预览图 → 创建 Tag/Release → 更新时间戳 → 记录发布者
 ```
+
+> 注：JSON 数据文件由前端部署时自动生成，工作流不再负责生成
 
 ## 本地测试
 
