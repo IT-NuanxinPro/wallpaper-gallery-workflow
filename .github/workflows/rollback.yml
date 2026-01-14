@@ -1,0 +1,72 @@
+name: Rollback Release
+
+on:
+  repository_dispatch:
+    types: [rollback-release]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要回滚的 tag（留空则回滚最新版本）'
+        required: false
+        default: ''
+
+env:
+  IMAGE_REPO: IT-NuanxinPro/nuanXinProPic
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout workflow repo
+        uses: actions/checkout@v4
+      
+      - name: Checkout image repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.IMAGE_REPO }}
+          token: ${{ secrets.REPO_TOKEN }}
+          path: nuanXinProPic
+          fetch-depth: 0
+      
+      - name: Get tag to rollback
+        id: get_tag
+        run: |
+          # 优先使用输入的 tag
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          elif [ -n "${{ github.event.client_payload.tag }}" ]; then
+            TAG="${{ github.event.client_payload.tag }}"
+          else
+            # 获取最新 tag
+            cd nuanXinProPic
+            TAG=$(git tag -l 'v*' --sort=-version:refname | head -1)
+            cd ..
+          fi
+          
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "🎯 Will rollback: $TAG"
+      
+      - name: Rollback
+        env:
+          GH_TOKEN: ${{ secrets.REPO_TOKEN }}
+        run: |
+          chmod +x scripts/*.sh
+          ./scripts/rollback.sh nuanXinProPic "${{ steps.get_tag.outputs.tag }}"
+      
+      - name: Read rollback result
+        id: result
+        run: |
+          if [ -f /tmp/rollback_result.txt ]; then
+            PREV_TAG=$(cat /tmp/rollback_result.txt)
+            echo "previous_tag=$PREV_TAG" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Summary
+        run: |
+          echo "## 🔄 Rollback Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- ❌ Deleted: **${{ steps.get_tag.outputs.tag }}**" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Current: **${{ steps.result.outputs.previous_tag || 'None' }}**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "⚠️ Note: Bing daily sync data was not affected." >> $GITHUB_STEP_SUMMARY

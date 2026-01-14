@@ -111,44 +111,34 @@ main() {
     local mobile_count=$(grep '^mobile|' "$timestamp_file" 2>/dev/null | wc -l | tr -d ' ')
     local avatar_count=$(grep '^avatar|' "$timestamp_file" 2>/dev/null | wc -l | tr -d ' ')
 
-    # 获取上次的统计（从 stats.json 或计算）
-    local prev_desktop=0 prev_mobile=0 prev_avatar=0
-    if [ -f "$stats_file" ] && command -v jq &>/dev/null; then
-        prev_desktop=$(jq -r '.total.desktop // 0' "$stats_file")
-        prev_mobile=$(jq -r '.total.mobile // 0' "$stats_file")
-        prev_avatar=$(jq -r '.total.avatar // 0' "$stats_file")
-    elif [ -n "$latest_tag" ]; then
-        # 从时间戳文件计算（排除当前 tag 的）
-        prev_desktop=$(grep '^desktop|' "$timestamp_file" 2>/dev/null | grep -v "|$latest_tag$" | wc -l | tr -d ' ')
-        prev_mobile=$(grep '^mobile|' "$timestamp_file" 2>/dev/null | grep -v "|$latest_tag$" | wc -l | tr -d ' ')
-        prev_avatar=$(grep '^avatar|' "$timestamp_file" 2>/dev/null | grep -v "|$latest_tag$" | wc -l | tr -d ' ')
+    # 计算新版本号（优先从 /tmp/new_tag.txt 读取，由 update-timestamps.sh 生成）
+    local new_tag=""
+    if [ -f /tmp/new_tag.txt ]; then
+        new_tag=$(cat /tmp/new_tag.txt)
+    fi
+    
+    if [ -z "$new_tag" ]; then
+        if [ -z "$latest_tag" ]; then
+            new_tag="v1.0.1"
+        else
+            local version=${latest_tag#v}
+            IFS='.' read -r major minor patch <<< "$version"
+            local new_patch=$((patch + 1))
+            new_tag="v${major}.${minor}.${new_patch}"
+        fi
     fi
 
-    # 计算增量
-    local added_desktop=$((desktop_count - prev_desktop))
-    local added_mobile=$((mobile_count - prev_mobile))
-    local added_avatar=$((avatar_count - prev_avatar))
-
-    # 确保增量不为负数
-    [ "$added_desktop" -lt 0 ] && added_desktop=0
-    [ "$added_mobile" -lt 0 ] && added_mobile=0
-    [ "$added_avatar" -lt 0 ] && added_avatar=0
+    # 计算增量：直接统计带有新 tag 的记录数量
+    # 因为 update-timestamps.sh 已经先执行，新图片已经带有新 tag
+    local added_desktop=$(grep '^desktop|' "$timestamp_file" 2>/dev/null | grep "|${new_tag}$" | wc -l | tr -d ' ')
+    local added_mobile=$(grep '^mobile|' "$timestamp_file" 2>/dev/null | grep "|${new_tag}$" | wc -l | tr -d ' ')
+    local added_avatar=$(grep '^avatar|' "$timestamp_file" 2>/dev/null | grep "|${new_tag}$" | wc -l | tr -d ' ')
 
     echo -e "📊 壁纸统计:"
     echo -e "  🖥️  Desktop: ${GREEN}${desktop_count}${NC} $([ $added_desktop -gt 0 ] && echo -e "(${GREEN}+${added_desktop}${NC})")"
     echo -e "  📱 Mobile: ${GREEN}${mobile_count}${NC} $([ $added_mobile -gt 0 ] && echo -e "(${GREEN}+${added_mobile}${NC})")"
     echo -e "  👤 Avatar: ${GREEN}${avatar_count}${NC} $([ $added_avatar -gt 0 ] && echo -e "(${GREEN}+${added_avatar}${NC})")"
     echo ""
-
-    # 计算新版本号
-    if [ -z "$latest_tag" ]; then
-        local new_tag="v1.0.1"
-    else
-        local version=${latest_tag#v}
-        IFS='.' read -r major minor patch <<< "$version"
-        local new_patch=$((patch + 1))
-        local new_tag="v${major}.${minor}.${new_patch}"
-    fi
 
     echo -e "📦 版本号: ${latest_tag:-无} → ${GREEN}${new_tag}${NC}"
     echo ""

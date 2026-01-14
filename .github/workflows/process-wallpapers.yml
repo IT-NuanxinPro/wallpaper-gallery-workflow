@@ -60,6 +60,19 @@ jobs:
             echo "has_new=false" >> $GITHUB_OUTPUT
           fi
       
+      - name: Verify timestamps (optional)
+        if: steps.process.outputs.has_new == 'true'
+        continue-on-error: true
+        run: |
+          # 校验数据一致性，发现问题自动修复
+          ./scripts/verify-timestamps.sh nuanXinProPic --fix || true
+      
+      - name: Update timestamps
+        if: steps.process.outputs.has_new == 'true'
+        run: |
+          # 先更新时间戳，这样 create-release 才能正确统计总数
+          ./scripts/update-timestamps.sh nuanXinProPic
+      
       - name: Create release
         if: steps.process.outputs.has_new == 'true'
         env:
@@ -78,22 +91,6 @@ jobs:
           PUBLISHER="${{ github.event.client_payload.publisher }}"
           
           ./scripts/create-release.sh nuanXinProPic "$MSG" "$PUBLISHER"
-      
-      - name: Update timestamps
-        if: steps.process.outputs.has_new == 'true'
-        run: |
-          NEW_TAG=$(cat /tmp/new_tag.txt 2>/dev/null || echo "")
-          ./scripts/update-timestamps.sh nuanXinProPic "$NEW_TAG"
-          
-          # 提交时间戳更新
-          cd nuanXinProPic
-          if [ -n "$(git status --porcelain timestamps-backup-all.txt)" ]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add timestamps-backup-all.txt
-            git commit -m "chore: update timestamps for $NEW_TAG"
-            git push
-          fi
       
       - name: Summary
         run: |
