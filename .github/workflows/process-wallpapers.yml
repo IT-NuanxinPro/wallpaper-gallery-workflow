@@ -60,13 +60,6 @@ jobs:
             echo "has_new=false" >> $GITHUB_OUTPUT
           fi
       
-      - name: Verify timestamps (optional)
-        if: steps.process.outputs.has_new == 'true'
-        continue-on-error: true
-        run: |
-          # 校验数据一致性，发现问题自动修复
-          ./scripts/verify-timestamps.sh nuanXinProPic --fix || true
-      
       - name: Create tag
         if: steps.process.outputs.has_new == 'true'
         run: |
@@ -89,6 +82,14 @@ jobs:
           # 读取刚创建的 tag
           NEW_TAG=$(cat /tmp/new_tag.txt)
           ./scripts/update-timestamps.sh nuanXinProPic "$NEW_TAG"
+      
+      - name: Verify timestamps
+        if: steps.process.outputs.has_new == 'true'
+        continue-on-error: true
+        run: |
+          # 第三步：校验数据一致性，用新 tag 修复遗漏
+          NEW_TAG=$(cat /tmp/new_tag.txt)
+          ./scripts/verify-timestamps.sh nuanXinProPic --fix "$NEW_TAG" || true
       
       - name: Publish release
         if: steps.process.outputs.has_new == 'true'

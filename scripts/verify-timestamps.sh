@@ -9,7 +9,9 @@
 #       - 可选：自动修复
 #
 # 用法：
-#   ./scripts/verify-timestamps.sh <图床仓库路径> [--fix]
+#   ./scripts/verify-timestamps.sh <图床仓库路径> [--fix] [tag]
+#
+#   tag: 可选，指定用于补充遗漏记录的 tag（默认使用最新 tag）
 #
 # ========================================
 
@@ -24,6 +26,7 @@ NC='\033[0m'
 main() {
     local project_root="${1:-.}"
     local fix_mode="${2:-}"
+    local use_tag="${3:-}"  # 可选：指定用于补充记录的 tag
     
     cd "$project_root"
     
@@ -102,13 +105,17 @@ main() {
         if [ "$fix_mode" = "--fix" ]; then
             echo -e "  ${BLUE}正在补充...${NC}"
             local timestamp=$(date +%s)
-            local latest_tag=$(git tag -l 'v*' --sort=-version:refname | head -1)
-            [ -z "$latest_tag" ] && latest_tag="v1.0.0"
+            # 优先使用传入的 tag，否则使用最新 tag
+            local tag_to_use="$use_tag"
+            if [ -z "$tag_to_use" ]; then
+                tag_to_use=$(git tag -l 'v*' --sort=-version:refname | head -1)
+                [ -z "$tag_to_use" ] && tag_to_use="v1.0.0"
+            fi
             
             for key in "${missing_files[@]}"; do
-                echo "${key}|${timestamp}|${latest_tag}" >> "$backup_file"
+                echo "${key}|${timestamp}|${tag_to_use}" >> "$backup_file"
             done
-            echo -e "  ${GREEN}已补充 $missing_count 条记录（标记为 $latest_tag）${NC}"
+            echo -e "  ${GREEN}已补充 $missing_count 条记录（标记为 $tag_to_use）${NC}"
         else
             echo -e "  ${YELLOW}使用 --fix 参数自动补充${NC}"
             # 显示前 10 条
