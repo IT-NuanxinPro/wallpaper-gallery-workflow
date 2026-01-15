@@ -55,7 +55,7 @@ detect_chinese_font() {
     echo ""
 }
 
-# 基于 Git diff 获取新增图片（极快）
+# 基于 Git 获取新增图片（包括未暂存的文件）
 get_new_images_by_git() {
     local project_root="$1"
     cd "$project_root"
@@ -64,18 +64,23 @@ get_new_images_by_git() {
     git fetch --tags --quiet 2>/dev/null || true
     local latest_tag=$(git tag -l 'v*' --sort=-version:refname | head -1)
     
-    if [ -z "$latest_tag" ]; then
-        echo -e "${YELLOW}  没有找到 tag，扫描所有未处理的图片${NC}" >&2
-        # 回退到遍历方式
-        get_new_images_by_scan "$project_root"
-        return
+    echo -e "${GREEN}  ⚡ 基于 Git 检测新增图片${NC}" >&2
+    echo -e "${GREEN}     Latest tag: ${latest_tag:-无}${NC}" >&2
+    
+    # 方法1: 检测已 commit 但在最新 tag 之后的文件（新增的图片）
+    if [ -n "$latest_tag" ]; then
+        echo -e "${GREEN}     检测 $latest_tag..HEAD 之间的新增文件...${NC}" >&2
+        git diff --name-only --diff-filter=A "$latest_tag"..HEAD -- 'wallpaper/' 2>/dev/null | \
+            grep -iE '\.(jpg|jpeg|png)$' || true
     fi
     
-    echo -e "${GREEN}  ⚡ 基于 Git diff 检测 (对比 $latest_tag)${NC}" >&2
+    # 方法2: 检测未跟踪的新文件（工作目录中但未 commit 的）
+    git ls-files --others --exclude-standard -- 'wallpaper/' 2>/dev/null | \
+        grep -iE '\.(jpg|jpeg|png)$' || true
     
-    # 获取新增的图片文件（只检测 wallpaper 目录下的图片）
-    # 使用 -z 选项避免中文路径被转义，然后用 tr 转换为换行符
-    git diff --name-only -z --diff-filter=A "$latest_tag"..HEAD -- 'wallpaper/*.jpg' 'wallpaper/*.jpeg' 'wallpaper/*.png' 'wallpaper/**/*.jpg' 'wallpaper/**/*.jpeg' 'wallpaper/**/*.png' 2>/dev/null | tr '\0' '\n' || true
+    # 方法3: 检测已暂存但未 commit 的新文件
+    git diff --cached --name-only --diff-filter=A -- 'wallpaper/' 2>/dev/null | \
+        grep -iE '\.(jpg|jpeg|png)$' || true
     
     cd - > /dev/null
 }
@@ -222,11 +227,25 @@ main() {
     echo -e "${BLUE}========================================${NC}"
     echo ""
     
-    # 获取新增图片列表
+    # 获取新增图片列表（去重）
     local new_files=()
+    local seen_files=()
+    
     while IFS= read -r file; do
-        [ -n "$file" ] && new_files+=("$file")
+        # 去重：检查是否已经添加过
+        if [ -n "$file" ] && [[ ! " ${seen_files[*]} " =~ " ${file} " ]]; then
+            new_files+=("$file")
+            seen_files+=("$file")
+        fi
     done < <(get_new_images_by_git "$project_root")
+    
+    # 如果 Git 方法没有结果，回退到全量扫描
+    if [ ${#new_files[@]} -eq 0 ]; then
+        echo -e "${YELLOW}  Git 检测无结果，回退到全量扫描${NC}"
+        while IFS= read -r file; do
+            [ -n "$file" ] && new_files+=("$file")
+        done < <(get_new_images_by_scan "$project_root")
+    fi
     
     local count=${#new_files[@]}
     

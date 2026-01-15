@@ -1,13 +1,16 @@
 #!/bin/bash
 # ========================================
-# 创建 Tag 和 Release 脚本
+# 发布 Release 脚本（最后一步）
 # ========================================
 #
-# 功能：自动递增版本号，创建 tag 和 GitHub Release
-#       更新 stats.json 统计文件
+# 功能：更新 stats.json，提交时间戳文件，发布 GitHub Release
+#
+# 前置条件：
+#   - create-tag.sh 已执行（/tmp/new_tag.txt 存在）
+#   - update-timestamps.sh 已执行（时间戳文件已更新）
 #
 # 用法：
-#   ./scripts/create-release.sh <图床仓库路径> [提交信息]
+#   ./scripts/publish-release.sh <图床仓库路径> [提交信息] [发布者]
 #
 # 环境变量：
 #   GH_TOKEN - GitHub Token（用于创建 Release）
@@ -72,85 +75,47 @@ fs.writeFileSync('$stats_file', JSON.stringify(stats, null, 2));
 
 main() {
     local project_root="${1:-.}"
-    local commit_msg="${2:-chore: update wallpapers [$(TZ='Asia/Shanghai' date +'%Y-%m-%d')]}"
+    local commit_msg="${2:-chore: update stats}"
     local publisher="${3:-}"
 
     cd "$project_root"
 
-    # 检查是否有更改（包括未暂存的更改）
-    # 同时检查 /tmp/processed_count.txt 是否有处理过的图片
-    local has_changes=false
-    if [ -n "$(git status --porcelain)" ]; then
-        has_changes=true
-    elif [ -f /tmp/processed_count.txt ]; then
-        local processed_count=$(cat /tmp/processed_count.txt)
-        if [ "$processed_count" -gt 0 ] 2>/dev/null; then
-            has_changes=true
-        fi
-    fi
-
-    if [ "$has_changes" = false ]; then
-        echo -e "${YELLOW}没有检测到更改，无需发布${NC}"
-        exit 0
-    fi
-
     echo -e "${BLUE}========================================${NC}"
-    echo -e "${BLUE}创建 Tag 和 Release${NC}"
+    echo -e "${BLUE}发布 Release${NC}"
     echo -e "${BLUE}========================================${NC}"
     echo ""
 
     local timestamp_file="timestamps-backup-all.txt"
     local stats_file="stats.json"
 
-    # 获取最新 tag
-    git fetch --tags --quiet 2>/dev/null || true
-    local latest_tag=$(git tag -l 'v*' --sort=-version:refname | head -1)
-
-    # 统计当前壁纸总数
-    local desktop_count=$(grep '^desktop|' "$timestamp_file" 2>/dev/null | wc -l | tr -d ' ')
-    local mobile_count=$(grep '^mobile|' "$timestamp_file" 2>/dev/null | wc -l | tr -d ' ')
-    local avatar_count=$(grep '^avatar|' "$timestamp_file" 2>/dev/null | wc -l | tr -d ' ')
-
-    # 计算新版本号（优先从 /tmp/new_tag.txt 读取，由 update-timestamps.sh 生成）
+    # 读取新 tag（由 create-tag.sh 生成）
     local new_tag=""
     if [ -f /tmp/new_tag.txt ]; then
         new_tag=$(cat /tmp/new_tag.txt)
     fi
     
     if [ -z "$new_tag" ]; then
-        if [ -z "$latest_tag" ]; then
-            new_tag="v1.0.1"
-        else
-            local version=${latest_tag#v}
-            IFS='.' read -r major minor patch <<< "$version"
-            local new_patch=$((patch + 1))
-            new_tag="v${major}.${minor}.${new_patch}"
-        fi
+        echo -e "${RED}错误: 未找到新 tag，请先运行 create-tag.sh${NC}"
+        exit 1
     fi
 
-    # 计算增量：直接统计带有新 tag 的记录数量
-    # 因为 update-timestamps.sh 已经先执行，新图片已经带有新 tag
-    echo -e "${BLUE}📊 统计增量 (tag: ${new_tag})...${NC}"
+    echo -e "📦 当前 Tag: ${GREEN}${new_tag}${NC}"
+    echo ""
+
+    # 统计当前壁纸总数
+    local desktop_count=$(grep '^desktop|' "$timestamp_file" 2>/dev/null | wc -l | tr -d ' ')
+    local mobile_count=$(grep '^mobile|' "$timestamp_file" 2>/dev/null | wc -l | tr -d ' ')
+    local avatar_count=$(grep '^avatar|' "$timestamp_file" 2>/dev/null | wc -l | tr -d ' ')
+
+    # 计算增量：统计带有新 tag 的记录数量
     local added_desktop=$(grep '^desktop|' "$timestamp_file" 2>/dev/null | grep "|${new_tag}$" | wc -l | tr -d ' ')
     local added_mobile=$(grep '^mobile|' "$timestamp_file" 2>/dev/null | grep "|${new_tag}$" | wc -l | tr -d ' ')
     local added_avatar=$(grep '^avatar|' "$timestamp_file" 2>/dev/null | grep "|${new_tag}$" | wc -l | tr -d ' ')
-    
-    # 调试：显示匹配的记录
-    echo -e "  Desktop 匹配记录:"
-    grep '^desktop|' "$timestamp_file" 2>/dev/null | grep "|${new_tag}$" | head -5 || echo "    (无)"
-    echo -e "  Mobile 匹配记录:"
-    grep '^mobile|' "$timestamp_file" 2>/dev/null | grep "|${new_tag}$" | head -5 || echo "    (无)"
-    echo -e "  Avatar 匹配记录:"
-    grep '^avatar|' "$timestamp_file" 2>/dev/null | grep "|${new_tag}$" | head -5 || echo "    (无)"
-    echo ""
 
     echo -e "📊 壁纸统计:"
     echo -e "  🖥️  Desktop: ${GREEN}${desktop_count}${NC} $([ $added_desktop -gt 0 ] && echo -e "(${GREEN}+${added_desktop}${NC})")"
     echo -e "  📱 Mobile: ${GREEN}${mobile_count}${NC} $([ $added_mobile -gt 0 ] && echo -e "(${GREEN}+${added_mobile}${NC})")"
     echo -e "  👤 Avatar: ${GREEN}${avatar_count}${NC} $([ $added_avatar -gt 0 ] && echo -e "(${GREEN}+${added_avatar}${NC})")"
-    echo ""
-
-    echo -e "📦 版本号: ${latest_tag:-无} → ${GREEN}${new_tag}${NC}"
     echo ""
 
     local today=$(TZ='Asia/Shanghai' date +'%Y-%m-%d')
@@ -159,23 +124,15 @@ main() {
     update_stats "$stats_file" "$new_tag" "$desktop_count" "$mobile_count" "$avatar_count" \
                  "$added_desktop" "$added_mobile" "$added_avatar" "$today" "$publisher"
 
-    # 配置 git
-    git config user.name "github-actions[bot]"
-    git config user.email "github-actions[bot]@users.noreply.github.com"
-
-    # 提交更改（包括 stats.json）
-    echo -e "${BLUE}📥 提交更改...${NC}"
-    git add .
-    git commit -m "$commit_msg"
-
-    # 创建 tag
-    echo -e "${BLUE}🏷️  创建 tag: ${new_tag}${NC}"
-    git tag -a "$new_tag" -m "Release $new_tag - $today"
-
-    # 推送
-    echo -e "${BLUE}🚀 推送到远程...${NC}"
-    git push
-    git push origin "$new_tag"
+    # 提交时间戳文件和 stats.json
+    if [ -n "$(git status --porcelain)" ]; then
+        echo -e "${BLUE}📥 提交统计文件...${NC}"
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add .
+        git commit -m "chore: update stats for $new_tag"
+        git push
+    fi
 
     # 创建 GitHub Release
     if command -v gh &>/dev/null || [ -n "$GH_TOKEN" ]; then
@@ -219,9 +176,6 @@ $commit_msg
     echo -e "${GREEN}✅ 发布成功!${NC}"
     echo -e "${GREEN}   标签: ${new_tag}${NC}"
     echo -e "${GREEN}========================================${NC}"
-
-    # 输出新 tag 供后续使用
-    echo "$new_tag" > /tmp/new_tag.txt
 }
 
 main "$@"

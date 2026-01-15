@@ -67,13 +67,30 @@ jobs:
           # 校验数据一致性，发现问题自动修复
           ./scripts/verify-timestamps.sh nuanXinProPic --fix || true
       
+      - name: Create tag
+        if: steps.process.outputs.has_new == 'true'
+        run: |
+          # 获取提交信息
+          if [ -n "${{ github.event.inputs.commit_message }}" ]; then
+            MSG="${{ github.event.inputs.commit_message }}"
+          elif [ -n "${{ github.event.client_payload.message }}" ]; then
+            MSG="${{ github.event.client_payload.message }}"
+          else
+            MSG="chore: 处理 ${{ steps.process.outputs.count }} 张新图片"
+          fi
+          
+          # 第一步：提交缩略图/预览图，创建并推送 tag
+          ./scripts/create-tag.sh nuanXinProPic "$MSG"
+      
       - name: Update timestamps
         if: steps.process.outputs.has_new == 'true'
         run: |
-          # 先更新时间戳，这样 create-release 才能正确统计总数
-          ./scripts/update-timestamps.sh nuanXinProPic
+          # 第二步：用新 tag 更新时间戳文件
+          # 读取刚创建的 tag
+          NEW_TAG=$(cat /tmp/new_tag.txt)
+          ./scripts/update-timestamps.sh nuanXinProPic "$NEW_TAG"
       
-      - name: Create release
+      - name: Publish release
         if: steps.process.outputs.has_new == 'true'
         env:
           GH_TOKEN: ${{ secrets.REPO_TOKEN }}
@@ -84,13 +101,14 @@ jobs:
           elif [ -n "${{ github.event.client_payload.message }}" ]; then
             MSG="${{ github.event.client_payload.message }}"
           else
-            MSG="chore: update wallpapers [$(TZ='Asia/Shanghai' date +'%Y-%m-%d')]"
+            MSG="chore: 处理 ${{ steps.process.outputs.count }} 张新图片"
           fi
           
           # 获取发布者
           PUBLISHER="${{ github.event.client_payload.publisher }}"
           
-          ./scripts/create-release.sh nuanXinProPic "$MSG" "$PUBLISHER"
+          # 第三步：更新 stats.json，提交，发布 release
+          ./scripts/publish-release.sh nuanXinProPic "$MSG" "$PUBLISHER"
       
       - name: Summary
         run: |
