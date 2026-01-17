@@ -7,49 +7,91 @@
 - 🔍 自动检测 `nuanXinProPic` 仓库中新增的壁纸
 - 🖼️ 自动生成缩略图（带水印）和预览图
 - 🏷️ 自动创建版本 Tag 和 GitHub Release
-- 📝 自动更新时间戳文件
+- 📝 自动更新时间戳和 metadata 文件
 - 👤 记录发布者信息到 stats.json
+- 🔒 并发控制和中断恢复机制
+- ✅ 数据完整性验证
 
 ## 项目结构
 
 ```
 wallpaper-gallery-workflow/
 ├── .github/workflows/
-│   └── process-wallpapers.yml    # 工作流配置（只负责调度）
+│   └── process-wallpapers.yml    # 工作流配置
 ├── scripts/
 │   ├── process-new-images.sh     # 处理新图片（生成缩略图/预览图）
-│   ├── create-release.sh         # 创建 Tag 和 Release
-│   └── update-timestamps.sh      # 更新时间戳文件
+│   ├── create-tag.sh             # 创建 Tag 并推送
+│   ├── update-timestamps.sh      # 更新时间戳文件
+│   ├── verify-timestamps.sh      # 校验时间戳一致性
+│   ├── verify-integrity.sh       # 数据完整性验证
+│   ├── process-metadata.js       # 处理 metadata-pending
+│   ├── publish-release.sh        # 更新 stats + 发布 Release
+│   └── rollback.sh               # 回滚脚本
 └── README.md
+```
+
+## 工作流执行顺序
+
+```
+1. process-new-images.sh   → 生成缩略图/预览图
+        ↓
+2. create-tag.sh           → 提交 + 创建 tag + 推送
+        ↓
+3. update-timestamps.sh    → 更新时间戳文件
+        ↓
+4. verify-timestamps.sh    → 校验时间戳一致性
+        ↓
+5. verify-integrity.sh     → 数据完整性验证
+        ↓
+6. process-metadata.js     → 处理 metadata-pending
+        ↓
+7. publish-release.sh      → 更新 stats + 发布 Release
 ```
 
 ## 脚本说明
 
 ### process-new-images.sh
 
-检测新增图片并生成缩略图/预览图，复用 `nuanXinProPic/scripts/local-process.sh` 的配置：
+检测新增图片并生成缩略图/预览图：
 
 - 缩略图：350px 宽，带水印，WebP 格式
 - 预览图：1920px 宽（mobile 1080px），无水印，WebP 格式
+- 自动追踪处理失败的图片
 
 ```bash
 ./scripts/process-new-images.sh <图床仓库路径>
 ```
 
-### create-release.sh
+### create-tag.sh
 
-自动递增版本号，创建 tag 和 GitHub Release，记录发布者信息：
+提交更改并创建 tag，支持中断恢复：
 
 ```bash
-./scripts/create-release.sh <图床仓库路径> [提交信息] [发布者]
+./scripts/create-tag.sh <图床仓库路径> [提交信息]
 ```
 
 ### update-timestamps.sh
 
-为新增图片添加时间戳记录：
+为新增图片添加时间戳记录，跳过处理失败的图片：
 
 ```bash
 ./scripts/update-timestamps.sh <图床仓库路径> [新tag]
+```
+
+### verify-integrity.sh
+
+验证数据完整性（孤儿文件检测、metadata 一致性等）：
+
+```bash
+./scripts/verify-integrity.sh <图床仓库路径> [--fix]
+```
+
+### publish-release.sh
+
+更新 stats.json 并创建 GitHub Release：
+
+```bash
+./scripts/publish-release.sh <图床仓库路径> [提交信息] [发布者]
 ```
 
 ## 触发方式
