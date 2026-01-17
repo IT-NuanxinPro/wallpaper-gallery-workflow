@@ -48,6 +48,7 @@ main() {
 
     local backup_file="$project_root/timestamps-backup-all.txt"
     local timestamp=$(date +%s)
+    local failed_file="/tmp/failed_images_list.txt"
 
     cd "$project_root"
 
@@ -67,14 +68,38 @@ main() {
     echo -e "${BLUE}更新时间戳文件...${NC}"
     echo -e "  Tag: ${GREEN}$new_tag${NC}"
 
+    # P0 修复：加载失败图片列表
+    local failed_images=()
+    if [ -f "$failed_file" ]; then
+        while IFS= read -r line; do
+            [ -n "$line" ] && failed_images+=("$line")
+        done < "$failed_file"
+        if [ ${#failed_images[@]} -gt 0 ]; then
+            echo -e "  ${YELLOW}将跳过 ${#failed_images[@]} 张处理失败的图片${NC}"
+        fi
+    fi
+
     # 直接扫描 wallpaper 目录，找出不在时间戳文件中的图片
     local new_files=()
-    
+
     echo -e "  ${BLUE}扫描新增图片...${NC}"
     while IFS= read -r file; do
         if [ -n "$file" ]; then
-            new_files+=("$file")
-            echo -e "    发现: $file"
+            # P0 修复：跳过失败的图片
+            local is_failed=false
+            for failed in "${failed_images[@]}"; do
+                if [ "$file" = "$failed" ]; then
+                    is_failed=true
+                    break
+                fi
+            done
+
+            if [ "$is_failed" = true ]; then
+                echo -e "    ${YELLOW}跳过失败图片${NC}: $file"
+            else
+                new_files+=("$file")
+                echo -e "    发现: $file"
+            fi
         fi
     done < <(get_new_images_by_scan "$project_root" "$backup_file")
 
@@ -106,7 +131,7 @@ main() {
 
     # 输出新 tag 供后续脚本使用
     echo "$new_tag" > /tmp/new_tag.txt
-    
+
     cd - > /dev/null
 }
 

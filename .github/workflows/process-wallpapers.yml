@@ -10,6 +10,11 @@ on:
         required: false
         default: 'chore: update wallpapers'
 
+# P0 修复：并发控制 - 防止多个工作流同时处理相同文件
+concurrency:
+  group: process-wallpapers
+  cancel-in-progress: false  # 不取消正在运行的，排队执行
+
 env:
   IMAGE_REPO: IT-NuanxinPro/nuanXinProPic
 
@@ -49,7 +54,7 @@ jobs:
         run: |
           chmod +x scripts/*.sh
           ./scripts/process-new-images.sh nuanXinProPic
-          
+
           # 读取处理数量
           if [ -f /tmp/processed_count.txt ]; then
             COUNT=$(cat /tmp/processed_count.txt)
@@ -59,9 +64,20 @@ jobs:
             echo "count=0" >> $GITHUB_OUTPUT
             echo "has_new=false" >> $GITHUB_OUTPUT
           fi
-      
+
+      - name: Check pending metadata
+        id: check_metadata
+        run: |
+          # 检查是否有待处理的 metadata-pending 文件
+          PENDING_DIR="nuanXinProPic/metadata-pending"
+          if [ -d "$PENDING_DIR" ] && [ "$(ls -A $PENDING_DIR/*.json 2>/dev/null | wc -l)" -gt 0 ]; then
+            echo "has_pending=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_pending=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Create tag
-        if: steps.process.outputs.has_new == 'true'
+        if: steps.process.outputs.has_new == 'true' || steps.check_metadata.outputs.has_pending == 'true'
         run: |
           # 获取提交信息
           if [ -n "${{ github.event.inputs.commit_message }}" ]; then
@@ -71,10 +87,10 @@ jobs:
           else
             MSG="chore: 处理 ${{ steps.process.outputs.count }} 张新图片"
           fi
-          
+
           # 第一步：提交缩略图/预览图，创建并推送 tag
           ./scripts/create-tag.sh nuanXinProPic "$MSG"
-      
+
       - name: Update timestamps
         if: steps.process.outputs.has_new == 'true'
         run: |
@@ -82,7 +98,7 @@ jobs:
           # 读取刚创建的 tag
           NEW_TAG=$(cat /tmp/new_tag.txt)
           ./scripts/update-timestamps.sh nuanXinProPic "$NEW_TAG"
-      
+
       - name: Verify timestamps
         if: steps.process.outputs.has_new == 'true'
         continue-on-error: true
@@ -90,9 +106,34 @@ jobs:
           # 第三步：校验数据一致性，用新 tag 修复遗漏
           NEW_TAG=$(cat /tmp/new_tag.txt)
           ./scripts/verify-timestamps.sh nuanXinProPic --fix "$NEW_TAG" || true
-      
+
+      - name: Verify data integrity
+        if: steps.process.outputs.has_new == 'true' || steps.check_metadata.outputs.has_pending == 'true'
+        continue-on-error: true
+        run: |
+          # P0 修复：数据完整性验证
+          ./scripts/verify-integrity.sh nuanXinProPic || true
+
+      - name: Process metadata-pending
+        id: metadata
+        if: steps.process.outputs.has_new == 'true' || steps.check_metadata.outputs.has_pending == 'true'
+        run: |
+          # 在 tag 创建之后处理 metadata，确保使用正确的新 tag
+          NEW_TAG=$(cat /tmp/new_tag.txt)
+          node scripts/process-metadata.js nuanXinProPic "$NEW_TAG"
+
+          # 读取metadata处理数量
+          if [ -f /tmp/metadata_processed.txt ]; then
+            META_COUNT=$(cat /tmp/metadata_processed.txt)
+            echo "meta_count=$META_COUNT" >> $GITHUB_OUTPUT
+            [ "$META_COUNT" -gt 0 ] && echo "has_metadata=true" >> $GITHUB_OUTPUT || echo "has_metadata=false" >> $GITHUB_OUTPUT
+          else
+            echo "meta_count=0" >> $GITHUB_OUTPUT
+            echo "has_metadata=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Publish release
-        if: steps.process.outputs.has_new == 'true'
+        if: steps.process.outputs.has_new == 'true' || steps.metadata.outputs.has_metadata == 'true'
         env:
           GH_TOKEN: ${{ secrets.REPO_TOKEN }}
         run: |
@@ -102,23 +143,32 @@ jobs:
           elif [ -n "${{ github.event.client_payload.message }}" ]; then
             MSG="${{ github.event.client_payload.message }}"
           else
-            MSG="chore: 处理 ${{ steps.process.outputs.count }} 张新图片"
+            IMG_COUNT="${{ steps.process.outputs.count }}"
+            META_COUNT="${{ steps.metadata.outputs.meta_count }}"
+            MSG="chore: 处理 ${IMG_COUNT} 张新图片, ${META_COUNT} 条元数据"
           fi
-          
+
           # 获取发布者
           PUBLISHER="${{ github.event.client_payload.publisher }}"
-          
+
           # 第三步：更新 stats.json，提交，发布 release
           ./scripts/publish-release.sh nuanXinProPic "$MSG" "$PUBLISHER"
-      
+
       - name: Summary
         run: |
           echo "## 🎉 Workflow Complete" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          
+
           if [ "${{ steps.process.outputs.has_new }}" == "true" ]; then
             echo "- ✅ Processed **${{ steps.process.outputs.count }}** new images" >> $GITHUB_STEP_SUMMARY
-            echo "- ✅ Created release" >> $GITHUB_STEP_SUMMARY
           else
             echo "- ℹ️ No new images to process" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ "${{ steps.metadata.outputs.has_metadata }}" == "true" ]; then
+            echo "- ✅ Processed **${{ steps.metadata.outputs.meta_count }}** metadata entries" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ "${{ steps.process.outputs.has_new }}" == "true" ] || [ "${{ steps.metadata.outputs.has_metadata }}" == "true" ]; then
+            echo "- ✅ Created release" >> $GITHUB_STEP_SUMMARY
           fi
