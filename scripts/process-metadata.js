@@ -184,8 +184,11 @@ function processPendingFile(pendingFile, metadataMap, newTag) {
     // 使用 relativePath 作为 key
     const key = image.relativePath
 
-    // 只添加不存在的记录（避免覆盖已有数据）
-    if (!metadataMap[series].images[key]) {
+    // 检查是否已存在记录
+    const existingImage = metadataMap[series].images[key]
+    
+    if (!existingImage) {
+      // 图片不存在，创建新记录
       // 获取图片信息（分辨率 + 文件大小）
       let imageInfo = { resolution: image.resolution, size: image.size || 0 }
 
@@ -240,7 +243,45 @@ function processPendingFile(pendingFile, metadataMap, newTag) {
       processed++
       console.log(`    + ${key}`)
     } else {
-      console.log(`    跳过 ${key} (已存在)`)
+      // 图片已存在，检查是否需要合并 AI 数据
+      const existingAI = existingImage.ai || {}
+      const newAI = image.ai || {}
+      
+      // 判断是否需要更新 AI 数据（新数据更完整或置信度更高）
+      const shouldUpdateAI = (
+        // 现有数据没有 AI 分析结果
+        !existingAI.analyzedAt ||
+        existingAI.model === 'filename-inference' ||
+        // 新数据有更高的置信度
+        (newAI.confidence > existingAI.confidence) ||
+        // 新数据有更完整的信息
+        (newAI.description && !existingAI.description) ||
+        (newAI.displayTitle && !existingAI.displayTitle)
+      )
+      
+      if (shouldUpdateAI && newAI.keywords && newAI.keywords.length > 0) {
+        // 合并 AI 数据
+        const mergedAI = {
+          ...existingAI,
+          ...newAI
+        }
+        
+        // 处理 AI filename 字段
+        if (newAI.filename) {
+          const filenameWithoutExt = newAI.filename.replace(/\.[^.]+$/, '')
+          mergedAI.displayTitle = mergedAI.displayTitle || filenameWithoutExt
+          mergedAI.aiFilename = Array.isArray(newAI.filename)
+            ? newAI.filename[0]
+            : newAI.filename
+          delete mergedAI.filename
+        }
+        
+        existingImage.ai = mergedAI
+        processed++
+        console.log(`    ↻ ${key} (合并 AI 数据)`)
+      } else {
+        console.log(`    跳过 ${key} (已存在，AI 数据无需更新)`)
+      }
     }
   }
 
@@ -431,10 +472,34 @@ function generateFrontendData(metadataMap, dataDir, newTag) {
     }
   }
 
-  // 生成 stats.json
+  // 生成 stats.json（保留现有的 releases 历史）
   const statsPath = path.join(dataDir, '../stats.json')
-  fs.writeFileSync(statsPath, JSON.stringify(stats, null, 2))
-  console.log(`  生成 stats.json`)
+
+  // 读取现有的 stats.json，保留 releases 和 total
+  let existingStats = {}
+  if (fs.existsSync(statsPath)) {
+    try {
+      existingStats = JSON.parse(fs.readFileSync(statsPath, 'utf-8'))
+      console.log(`  读取现有 stats.json (${existingStats.releases?.length || 0} 条发布记录)`)
+    } catch (e) {
+      console.warn(`  警告: 无法解析现有 stats.json，将创建新文件`)
+    }
+  }
+
+  // 合并数据：保留 releases，更新 total 和 series
+  const mergedStats = {
+    ...stats,
+    total: {
+      desktop: stats.series.desktop?.count || 0,
+      mobile: stats.series.mobile?.count || 0,
+      avatar: stats.series.avatar?.count || 0,
+      bing: existingStats.total?.bing || 0  // bing 不在此脚本处理，保留原值
+    },
+    releases: existingStats.releases || []
+  }
+
+  fs.writeFileSync(statsPath, JSON.stringify(mergedStats, null, 2))
+  console.log(`  生成 stats.json (保留 ${mergedStats.releases.length} 条发布记录)`)
 
   return stats
 }
@@ -487,20 +552,10 @@ async function main() {
   let totalProcessed = 0
 
   // ========================================
-  // 步骤 1: 从 timestamps-backup-all.txt 同步缺失的图片
-  // ========================================
-  // 这会处理通过 Gitee 同步或其他方式直接添加的图片
-  console.log('步骤 1: 从 timestamps 同步缺失的图片...')
-  const syncedFromTimestamps = syncFromTimestamps(timestampsFile, metadataMap, newTag)
-  totalProcessed += syncedFromTimestamps
-  console.log(`  从 timestamps 同步了 ${syncedFromTimestamps} 张图片`)
-  console.log()
-
-  // ========================================
-  // 步骤 2: 处理 metadata-pending 文件
+  // 步骤 1: 处理 metadata-pending 文件（优先处理 AI 数据）
   // ========================================
   // 这会处理通过 Studio 上传的图片（带 AI 元数据）
-  console.log('步骤 2: 处理 metadata-pending 文件...')
+  console.log('步骤 1: 处理 metadata-pending 文件...')
 
   if (!fs.existsSync(pendingDir)) {
     console.log('  metadata-pending 目录不存在，跳过')
@@ -540,6 +595,16 @@ async function main() {
     }
   }
 
+  console.log()
+
+  // ========================================
+  // 步骤 2: 从 timestamps-backup-all.txt 同步缺失的图片
+  // ========================================
+  // 这会处理通过 Gitee 同步或其他方式直接添加的图片
+  console.log('步骤 2: 从 timestamps 同步缺失的图片...')
+  const syncedFromTimestamps = syncFromTimestamps(timestampsFile, metadataMap, newTag)
+  totalProcessed += syncedFromTimestamps
+  console.log(`  从 timestamps 同步了 ${syncedFromTimestamps} 张图片`)
   console.log()
   console.log(`共处理 ${totalProcessed} 张图片`)
 
