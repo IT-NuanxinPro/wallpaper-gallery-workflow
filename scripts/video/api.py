@@ -2,11 +2,30 @@
 import hashlib
 import http.client
 import json
+import re
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 from urllib.parse import urlsplit
+
+USER_AGENT = "wallpaper-video-workflow/1.0"
+
+
+def request_context(url, method):
+    # 只输出固定API阶段，不输出任务ID、签名查询、未知路径或域名。
+    path = urlsplit(url).path
+    if path == "/internal/video/claim":
+        stage = "internal/video/claim"
+    else:
+        match = re.fullmatch(r"/internal/video/(jobs|publications)/[A-Za-z0-9_-]+/(source|objects|heartbeat|complete|checkpoint|progress|fail|verify|mirrors)", path)
+        if match:
+            stage = f"internal/video/{match[1]}/:id/{match[2]}"
+        elif path.startswith("/repos/"):
+            stage = "GitHub API"
+        else:
+            stage = "HTTP request"
+    return f"{method} {stage}"
 
 
 class HTTPFailure(RuntimeError):
@@ -17,7 +36,8 @@ class HTTPFailure(RuntimeError):
 
 def json_request(url, method="GET", body=None, headers=None, timeout=60):
     data = None if body is None else json.dumps(body, ensure_ascii=False).encode()
-    request = urllib.request.Request(url, data=data, method=method, headers={"Accept": "application/json", **({"Content-Type": "application/json"} if data is not None else {}), **(headers or {})})
+    context = request_context(url, method)
+    request = urllib.request.Request(url, data=data, method=method, headers={"Accept": "application/json", "User-Agent": USER_AGENT, **({"Content-Type": "application/json"} if data is not None else {}), **(headers or {})})
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             data = response.read()
@@ -25,9 +45,9 @@ def json_request(url, method="GET", body=None, headers=None, timeout=60):
     except urllib.error.HTTPError as error:
         status = error.code
         error.close()
-        raise HTTPFailure(status) from None
+        raise HTTPFailure(status, context) from None
     except urllib.error.URLError:
-        raise RuntimeError("HTTP connection failed") from None
+        raise RuntimeError(context + " connection failed") from None
 
 
 class ServiceAPI:
@@ -46,7 +66,8 @@ class ServiceAPI:
 
 def read_signed(url):
     try:
-        return urllib.request.urlopen(url, timeout=60)
+        request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+        return urllib.request.urlopen(request, timeout=60)
     except urllib.error.HTTPError as error:
         status = error.code
         error.close()
@@ -66,6 +87,7 @@ def put_stream(url, source, size, content_type, expected_sha256=None, deadline=N
         connection.putrequest("PUT", parsed.path + ("?" + parsed.query if parsed.query else ""))
         connection.putheader("Content-Type", content_type)
         connection.putheader("Content-Length", str(size))
+        connection.putheader("User-Agent", USER_AGENT)
         connection.endheaders()
         for chunk in iter(lambda: source.read(1024 * 1024), b""):
             if deadline and time.monotonic() >= deadline:
@@ -102,7 +124,7 @@ def github_artifact_bytes(url, headers, maximum=1048576):
             return None
     opener = urllib.request.build_opener(NoRedirect())
     try:
-        response = opener.open(urllib.request.Request(url, headers=headers), timeout=60)
+        response = opener.open(urllib.request.Request(url, headers={"User-Agent": USER_AGENT, **headers}), timeout=60)
     except urllib.error.HTTPError as error:
         status, location = error.code, error.headers.get("Location")
         error.close()
