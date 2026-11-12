@@ -38,7 +38,7 @@ main() {
     git config user.email "github-actions[bot]@users.noreply.github.com"
 
     # 获取最新 tag
-    git fetch --tags --quiet 2>/dev/null || true
+    git fetch --tags --quiet
     local latest_tag=$(git tag -l 'v*' --sort=-version:refname | head -1)
 
     # ==========================================
@@ -64,6 +64,9 @@ main() {
         else
             # 没有新更改，复用现有 tag
             echo -e "${GREEN}   没有新更改，复用现有 tag: ${existing_tag}${NC}"
+            # 本地 tag 可能来自一次推送失败，确认提交和 tag 都已推送后才传递成功。
+            git push
+            git push origin "$existing_tag"
             echo "$existing_tag" > /tmp/new_tag.txt
             return 0
         fi

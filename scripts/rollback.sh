@@ -46,7 +46,7 @@ main() {
     local stats_file="stats.json"
 
     # 获取所有 tags
-    git fetch --tags --quiet 2>/dev/null || true
+    git fetch --tags --quiet
     local all_tags=$(git tag -l 'v*' --sort=-version:refname)
     
     if [ -z "$all_tags" ]; then
@@ -145,7 +145,11 @@ main() {
         done
         
         # 清理空目录
-        find wallpaper thumbnail preview -type d -empty -delete 2>/dev/null || true
+        for series in desktop mobile avatar; do
+            for root in wallpaper thumbnail preview; do
+                [ ! -d "$root/$series" ] || find "$root/$series" -type d -empty -delete
+            done
+        done
         
         echo -e "${GREEN}✅ 文件删除完成${NC}"
         echo ""
@@ -154,7 +158,7 @@ main() {
         echo -e "${BLUE}📝 更新时间戳文件...${NC}"
         
         # 移除该 tag 的记录
-        grep -v "|${target_tag}$" "$timestamp_file" > "${timestamp_file}.tmp" || true
+        awk -F '|' -v tag="$target_tag" '!(($1 == "desktop" || $1 == "mobile" || $1 == "avatar") && $4 == tag)' "$timestamp_file" > "${timestamp_file}.tmp"
         mv "${timestamp_file}.tmp" "$timestamp_file"
         
         echo -e "${GREEN}✅ 时间戳文件已更新${NC}"
@@ -170,6 +174,7 @@ main() {
     local avatar_count=$(grep '^avatar|' "$timestamp_file" 2>/dev/null | wc -l | tr -d ' ')
     local last_updated
     last_updated=$(format_datetime)
+    local retained_release_count=0
 
     if command -v jq &>/dev/null; then
         # 更新总数，移除该 tag 的 release 记录
@@ -178,19 +183,31 @@ main() {
            --argjson mobile "$mobile_count" \
            --argjson avatar "$avatar_count" \
            --arg last_updated "$last_updated" \
-           '.total = {"desktop": $desktop, "mobile": $mobile, "avatar": $avatar} | 
+           '.total = ((.total // {}) + {"desktop": $desktop, "mobile": $mobile, "avatar": $avatar}) |
             .lastUpdated = $last_updated | 
-            .releases = [.releases[] | select(.tag != $tag)]' \
+            .releases = [(.releases // [])[] |
+              if .tag == $tag then
+                .added = ((.added // {}) | del(.desktop, .mobile, .avatar)) |
+                select((.added | length) > 0 or ((keys - ["tag", "date", "added", "publisher"]) | length) > 0)
+              else . end]' \
            "$stats_file" > "${stats_file}.tmp" && mv "${stats_file}.tmp" "$stats_file"
+        retained_release_count=$(jq --arg tag "$target_tag" '[.releases[]? | select(.tag == $tag)] | length' "$stats_file")
     elif command -v node &>/dev/null; then
-        node -e "
+        retained_release_count=$(node -e "
 const fs = require('fs');
 const stats = JSON.parse(fs.readFileSync('$stats_file', 'utf8'));
-stats.total = { desktop: $desktop_count, mobile: $mobile_count, avatar: $avatar_count };
+stats.total = { ...(stats.total || {}), desktop: $desktop_count, mobile: $mobile_count, avatar: $avatar_count };
 stats.lastUpdated = '$last_updated';
-stats.releases = (stats.releases || []).filter(r => r.tag !== '$target_tag');
+stats.releases = (stats.releases || []).flatMap(release => {
+  if (release.tag !== '$target_tag') return [release];
+  const added = { ...(release.added || {}) };
+  for (const series of ['desktop', 'mobile', 'avatar']) delete added[series];
+  const unknownFields = Object.keys(release).filter(key => !['tag', 'date', 'added', 'publisher'].includes(key));
+  return Object.keys(added).length || unknownFields.length ? [{ ...release, added }] : [];
+});
 fs.writeFileSync('$stats_file', JSON.stringify(stats, null, 2));
-"
+console.log(stats.releases.filter(release => release.tag === '$target_tag').length);
+")
     fi
     
     echo -e "${GREEN}✅ 统计文件已更新${NC}"
@@ -203,32 +220,32 @@ fs.writeFileSync('$stats_file', JSON.stringify(stats, null, 2));
     git config user.email "github-actions[bot]@users.noreply.github.com"
     
     git add .
-    git commit -m "chore: rollback ${target_tag}" || echo "No changes to commit"
-    git push || true
+    if ! git diff --cached --quiet; then
+        git commit -m "chore: rollback ${target_tag}"
+    fi
+    git push
     
     echo -e "${GREEN}✅ 更改已提交${NC}"
     echo ""
 
-    # 6. 删除 tag 和 release
-    echo -e "${BLUE}🏷️  删除 tag 和 release...${NC}"
-    
-    # 删除远程 tag
-    git push origin --delete "$target_tag" 2>/dev/null || echo "Remote tag already deleted"
-    
-    # 删除本地 tag
-    git tag -d "$target_tag" 2>/dev/null || echo "Local tag already deleted"
-    
-    # 删除 GitHub Release
-    if command -v gh &>/dev/null || [ -n "$GH_TOKEN" ]; then
-        gh release delete "$target_tag" --yes 2>/dev/null || echo "Release already deleted or not found"
+    # 6. 混合发布保留其他系列的 tag/release；纯静态发布沿用原清理行为。
+    if [ "$retained_release_count" -gt 0 ] || awk -F '|' -v tag="$target_tag" '$4 == tag && $1 != "desktop" && $1 != "mobile" && $1 != "avatar" { found = 1 } END { exit !found }' "$timestamp_file"; then
+        echo -e "${BLUE}🏷️  保留其他系列使用的 tag 和 release: ${target_tag}${NC}"
+        previous_tag="$target_tag"
+    else
+        echo -e "${BLUE}🏷️  删除 tag 和 release...${NC}"
+        git push origin --delete "$target_tag"
+        git tag -d "$target_tag"
+        if command -v gh &>/dev/null || [ -n "$GH_TOKEN" ]; then
+            gh release delete "$target_tag" --yes
+        fi
+        echo -e "${GREEN}✅ Tag 和 Release 已删除${NC}"
     fi
-    
-    echo -e "${GREEN}✅ Tag 和 Release 已删除${NC}"
     echo ""
 
     echo -e "${GREEN}========================================${NC}"
     echo -e "${GREEN}✅ 回滚成功!${NC}"
-    echo -e "${GREEN}   已删除: ${target_tag}${NC}"
+    echo -e "${GREEN}   已处理: ${target_tag}${NC}"
     echo -e "${GREEN}   当前版本: ${previous_tag:-无}${NC}"
     echo -e "${GREEN}   删除文件: ${total_removed} 个${NC}"
     echo -e "${GREEN}========================================${NC}"

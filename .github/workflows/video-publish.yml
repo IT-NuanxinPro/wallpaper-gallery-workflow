@@ -1,0 +1,47 @@
+name: Publish reviewed videos
+
+on:
+  workflow_dispatch:
+    inputs:
+      publication_id:
+        description: Optional wake-up hint; persistent queue determines the claimed publication
+        required: false
+        type: string
+  repository_dispatch:
+    types: [publish-videos]
+  schedule:
+    - cron: '5,15,25,35,45,55 * * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: video-publishing-v1
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: ${{ vars.VIDEO_INGEST_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    env:
+      VIDEO_API_URL: ${{ vars.VIDEO_API_URL || secrets.VIDEO_API_URL }}
+      VIDEO_SERVICE_TOKEN: ${{ secrets.VIDEO_SERVICE_TOKEN }}
+      REPO_TOKEN: ${{ secrets.REPO_TOKEN }}
+      VIDEO_DATA_REPOSITORY: ${{ vars.VIDEO_DATA_REPOSITORY || 'IT-NuanxinPro/nuanXinProPic' }}
+      VIDEO_DATA_BRANCH: ${{ vars.VIDEO_DATA_BRANCH || 'main' }}
+      VIDEO_GALLERY_REPOSITORY: ${{ vars.VIDEO_GALLERY_REPOSITORY || 'IT-NuanxinPro/wallpaper-gallery' }}
+      VIDEO_GALLERY_WORKFLOW: ${{ vars.VIDEO_GALLERY_WORKFLOW }}
+      VIDEO_GALLERY_REF: ${{ vars.VIDEO_GALLERY_REF || 'main' }}
+      PYTHONPATH: scripts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install test dependencies
+        run: python -m pip install -r scripts/video/requirements.txt
+      - name: Test video pipeline
+        run: python -m unittest discover -s scripts/video/tests -v
+      - name: Publish persistent queue
+        run: python -m video publish --max-tasks 1

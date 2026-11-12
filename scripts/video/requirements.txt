@@ -1,0 +1,2 @@
+# macOS FFmpeg 缺少 libwebp 时使用，也用于 WebP 验收测试。
+Pillow>=10.4,<13

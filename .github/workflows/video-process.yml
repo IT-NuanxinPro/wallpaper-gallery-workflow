@@ -1,0 +1,44 @@
+name: Process queued videos
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: Optional wake-up hint; persistent queue determines the claimed job
+        required: false
+        type: string
+  repository_dispatch:
+    types: [process-videos]
+  schedule:
+    - cron: '*/10 * * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: video-processing-v1
+  cancel-in-progress: false
+
+jobs:
+  process:
+    if: ${{ vars.VIDEO_INGEST_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      VIDEO_API_URL: ${{ vars.VIDEO_API_URL || secrets.VIDEO_API_URL }}
+      VIDEO_SERVICE_TOKEN: ${{ secrets.VIDEO_SERVICE_TOKEN }}
+      PYTHONPATH: scripts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install media tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          python -m pip install -r scripts/video/requirements.txt
+      - name: Test video pipeline
+        run: python -m unittest discover -s scripts/video/tests -v
+      - name: Process persistent queue
+        run: python -m video process --max-tasks 8

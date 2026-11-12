@@ -134,7 +134,7 @@ curl -X POST \
 上传管理系统 → 触发工作流(含发布者) → 检测新图片 → 生成缩略图/预览图 → 创建 Tag/Release → 更新时间戳 → 记录发布者
 ```
 
-> 注：JSON 数据文件由前端部署时自动生成，工作流不再负责生成
+> 静态图片继续沿用现有 JSON 生成方式；视频采用下方独立流水线和增量 JSON 生成器。
 
 ## 本地测试
 
@@ -158,6 +158,29 @@ git clone https://github.com/IT-NuanxinPro/nuanXinProPic.git
 | [nuanXinProPic](https://github.com/IT-NuanxinPro/nuanXinProPic) | 壁纸图床仓库 |
 | wallpaper-gallery | 前端展示网站 |
 | wallpaper-gallery-upload | 上传管理系统 |
+
+## 视频上传与发布
+
+视频使用两个独立串行工作流，均从 Worker 持久队列领取租约，每 10 分钟补扫一次：
+
+- `video-process.yml`：接收 `process-videos` dispatch，下载私有素材，生成兼容 MP4、完整静音预览、5 张候选封面与 480px WebP，验收后进入审核。
+- `video-publish.yml`：接收 `publish-videos` dispatch，将冻结审核资源流式复制到正式桶并验收，从 GitHub 最新 HEAD 原子合并视频 JSON，显式镜像到 R2，等待 gallery 真实部署结果。
+
+必须配置 `VIDEO_API_URL`（Actions variable 或 secret）、`VIDEO_SERVICE_TOKEN`、`REPO_TOKEN`；发布另需 `VIDEO_GALLERY_WORKFLOW` variable。图床/前端仓库及分支可通过 `VIDEO_DATA_REPOSITORY`、`VIDEO_DATA_BRANCH`、`VIDEO_GALLERY_REPOSITORY`、`VIDEO_GALLERY_REF` variables 覆盖。
+
+gallery 接入须支持 `publication_id`、`minimum_data_ref`，使用 `video:<publication_id>:<minimum_data_ref>` run-name，并上传 `video-publication-result` artifact，记录真实数据 SHA 和 Pages deployment ID。未提供真实结果时发布不会标记成功。当前 gallery 接入留待用户前端提交后完成。
+
+本地仅验收媒体或离线生成 JSON，不需要远程凭据：
+
+```bash
+PYTHONPATH="scripts" python3 -m unittest discover -s "scripts/video/tests" -v
+PYTHONPATH="scripts" python3 -m video local "/path/to/input.mp4" "/path/to/output"
+PYTHONPATH="scripts" python3 -m video catalog "/path/to/nuanXinProPic" "/path/to/offline-output"
+```
+
+运行环境为 Linux/macOS 的 Python 3.9+、FFmpeg/ffprobe；FFmpeg 没有 libwebp 时使用 `scripts/video/requirements.txt` 中的 Pillow。重跑通过私有 R2 checkpoint 校验并恢复产物，不使用 Actions cache 保存未审核媒体。HDR/PQ/HLG/Dolby Vision 明确拒绝，避免错误色彩转换。
+
+完整实现、接口扩展、恢复策略及真实素材验证记录见 [视频实现报告](docs/video-implementation.md)。
 
 ## License
 

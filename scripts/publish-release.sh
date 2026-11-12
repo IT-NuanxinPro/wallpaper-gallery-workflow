@@ -58,18 +58,18 @@ update_stats() {
            --argjson mobile "$mobile_count" \
            --argjson avatar "$avatar_count" \
            --arg last_updated "$last_updated" \
-           '.total = {"desktop": $desktop, "mobile": $mobile, "avatar": $avatar} | .lastUpdated = $last_updated | .releases = [$release] + .releases' \
+           '.total = ((.total // {}) + {"desktop": $desktop, "mobile": $mobile, "avatar": $avatar}) | .lastUpdated = $last_updated | .releases = [$release] + .releases' \
            "$stats_file" > "${stats_file}.tmp" && mv "${stats_file}.tmp" "$stats_file"
     elif command -v node &>/dev/null; then
         node -e "
 const fs = require('fs');
 const stats = JSON.parse(fs.readFileSync('$stats_file', 'utf8'));
-stats.total = { desktop: $desktop_count, mobile: $mobile_count, avatar: $avatar_count };
+stats.total = { ...(stats.total || {}), desktop: $desktop_count, mobile: $mobile_count, avatar: $avatar_count };
 stats.lastUpdated = '$last_updated';
 stats.releases = [
   { tag: '$new_tag', date: '$today', added: { desktop: $added_desktop, mobile: $added_mobile, avatar: $added_avatar }, publisher: '$publisher' },
   ...(stats.releases || [])
-].slice(0, 50);
+];
 fs.writeFileSync('$stats_file', JSON.stringify(stats, null, 2));
 "
     else
