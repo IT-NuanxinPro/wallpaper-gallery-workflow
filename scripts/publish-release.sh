@@ -19,6 +19,8 @@
 
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -58,7 +60,7 @@ update_stats() {
            --argjson mobile "$mobile_count" \
            --argjson avatar "$avatar_count" \
            --arg last_updated "$last_updated" \
-           '.total = ((.total // {}) + {"desktop": $desktop, "mobile": $mobile, "avatar": $avatar}) | .lastUpdated = $last_updated | .releases = [$release] + .releases' \
+           '.total = ((.total // {}) + {"desktop": $desktop, "mobile": $mobile, "avatar": $avatar}) | .lastUpdated = $last_updated | (.releases // []) as $history | ($history | map(select(.tag == $release.tag)) | first // {}) as $previous | .releases = [($previous + $release + {added: (($previous.added // {}) + $release.added)})] + [$history[] | select(.tag != $release.tag)]' \
            "$stats_file" > "${stats_file}.tmp" && mv "${stats_file}.tmp" "$stats_file"
     elif command -v node &>/dev/null; then
         node -e "
@@ -66,9 +68,10 @@ const fs = require('fs');
 const stats = JSON.parse(fs.readFileSync('$stats_file', 'utf8'));
 stats.total = { ...(stats.total || {}), desktop: $desktop_count, mobile: $mobile_count, avatar: $avatar_count };
 stats.lastUpdated = '$last_updated';
+const previousRelease = (stats.releases || []).find(release => release.tag === '$new_tag') || {};
 stats.releases = [
-  { tag: '$new_tag', date: '$today', added: { desktop: $added_desktop, mobile: $added_mobile, avatar: $added_avatar }, publisher: '$publisher' },
-  ...(stats.releases || [])
+  { ...previousRelease, tag: '$new_tag', date: '$today', added: { ...(previousRelease.added || {}), desktop: $added_desktop, mobile: $added_mobile, avatar: $added_avatar }, publisher: '$publisher' },
+  ...(stats.releases || []).filter(release => release.tag !== '$new_tag')
 ];
 fs.writeFileSync('$stats_file', JSON.stringify(stats, null, 2));
 "
@@ -78,6 +81,15 @@ fs.writeFileSync('$stats_file', JSON.stringify(stats, null, 2));
     fi
 
     echo -e "${GREEN}✅ stats.json 已更新${NC}"
+}
+
+publish_github_release() {
+    local tag="$1" body="$2"
+    if gh release view "$tag" --json tagName >/dev/null 2>&1; then
+        gh release edit "$tag" --title "$tag" --notes "$body" --latest
+    else
+        gh release create "$tag" --title "$tag" --notes "$body" --latest
+    fi
 }
 
 main() {
@@ -92,7 +104,6 @@ main() {
     echo -e "${BLUE}========================================${NC}"
     echo ""
 
-    local timestamp_file="timestamps-backup-all.txt"
     local stats_file="stats.json"
 
     # 读取新 tag（由 create-tag.sh 生成）
@@ -109,15 +120,25 @@ main() {
     echo -e "📦 当前 Tag: ${GREEN}${new_tag}${NC}"
     echo ""
 
-    # 统计当前壁纸总数
-    local desktop_count=$(grep '^desktop|' "$timestamp_file" 2>/dev/null | wc -l | tr -d ' ')
-    local mobile_count=$(grep '^mobile|' "$timestamp_file" 2>/dev/null | wc -l | tr -d ' ')
-    local avatar_count=$(grep '^avatar|' "$timestamp_file" 2>/dev/null | wc -l | tr -d ' ')
-
-    # 计算增量：统计带有新 tag 的记录数量
-    local added_desktop=$(grep '^desktop|' "$timestamp_file" 2>/dev/null | grep "|${new_tag}$" | wc -l | tr -d ' ')
-    local added_mobile=$(grep '^mobile|' "$timestamp_file" 2>/dev/null | grep "|${new_tag}$" | wc -l | tr -d ' ')
-    local added_avatar=$(grep '^avatar|' "$timestamp_file" 2>/dev/null | grep "|${new_tag}$" | wc -l | tr -d ' ')
+    local statistics
+    statistics=$(node "$SCRIPT_DIR/lib/timestamps.mjs" stats "$PWD" "$new_tag")
+    local desktop_count mobile_count avatar_count added_desktop added_mobile added_avatar
+    local count_values
+    count_values=$(
+        printf '%s' "$statistics" | node -e '
+let input = "";
+process.stdin.on("data", chunk => input += chunk);
+process.stdin.on("end", () => {
+  const stats = JSON.parse(input);
+  const values = [stats.total?.desktop, stats.total?.mobile, stats.total?.avatar,
+    stats.added?.desktop, stats.added?.mobile, stats.added?.avatar];
+  if (values.some(value => !Number.isSafeInteger(value) || value < 0)) {
+    throw new Error("发布统计必须包含六个非负整数，停止发布");
+  }
+  console.log(values.join(" "));
+});'
+    )
+    read -r desktop_count mobile_count avatar_count added_desktop added_mobile added_avatar <<< "$count_values"
 
     echo -e "📊 壁纸统计:"
     echo -e "  🖥️  Desktop: ${GREEN}${desktop_count}${NC} $([ $added_desktop -gt 0 ] && echo -e "(${GREEN}+${added_desktop}${NC})")"
@@ -168,10 +189,7 @@ $commit_msg
 ---
 *自动发布 by GitHub Actions*"
 
-        gh release create "$new_tag" \
-            --title "$new_tag" \
-            --notes "$body" \
-            --latest
+        publish_github_release "$new_tag" "$body"
 
         echo -e "${GREEN}✅ Release 创建成功${NC}"
     else
@@ -185,4 +203,6 @@ $commit_msg
     echo -e "${GREEN}========================================${NC}"
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

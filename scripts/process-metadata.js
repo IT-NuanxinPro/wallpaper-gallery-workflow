@@ -633,7 +633,7 @@ function generateFrontendData(metadataMap, dataDir, newTag) {
 // 主函数
 async function main() {
   const args = process.argv.slice(2)
-  const projectRoot = args[0] || '.'
+  const projectRoot = path.resolve(args[0] || '.')
   let newTag = args[1] || ''
 
   // 检查是否有 --force 参数（强制重新生成前端数据）
@@ -720,7 +720,7 @@ async function main() {
   // ========================================
   // 这会处理通过 Gitee 同步或其他方式直接添加的图片
   console.log('步骤 2: 从 timestamps 同步缺失的图片...')
-  const syncedFromTimestamps = syncFromTimestamps(timestampsFile, metadataMap, newTag)
+  const syncedFromTimestamps = await syncFromTimestamps(timestampsFile, metadataMap, newTag)
   totalProcessed += syncedFromTimestamps
   console.log(`  从 timestamps 同步了 ${syncedFromTimestamps} 张图片`)
   console.log()
@@ -768,7 +768,8 @@ async function main() {
 }
 
 // 从 timestamps-backup-all.txt 同步缺失的图片到 metadata
-function syncFromTimestamps(timestampsFile, metadataMap, defaultTag) {
+async function syncFromTimestamps(timestampsFile, metadataMap, defaultTag) {
+  const { parseTimestamp } = await import('./lib/timestamps.mjs')
   if (!fs.existsSync(timestampsFile)) {
     console.log('  timestamps-backup-all.txt 不存在，跳过同步')
     return 0
@@ -780,11 +781,9 @@ function syncFromTimestamps(timestampsFile, metadataMap, defaultTag) {
   let synced = 0
 
   for (const line of lines) {
-    // 格式: series|relativePath|timestamp|cdnTag
-    const parts = line.split('|')
-    if (parts.length < 4) continue
-
-    const [series, relativePath, timestamp, cdnTag] = parts
+    const record = parseTimestamp(line)
+    if (!record) continue
+    const { series, relativePath, timestamp, tag: cdnTag } = record
 
     // 只处理已知的 series
     if (!metadataMap[series]) continue

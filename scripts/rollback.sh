@@ -91,7 +91,13 @@ main() {
     local avatar_removed=0
 
     # timestamps 文件格式: series|rel_path|timestamp|tag
-    while IFS='|' read -r series rel_path timestamp tag; do
+    while IFS= read -r record || [ -n "$record" ]; do
+        local tag="${record##*|}"
+        local head="${record%|*}"
+        local timestamp="${head##*|}"
+        local identity="${head%|*}"
+        local series="${identity%%|*}"
+        local rel_path="${identity#*|}"
         if [ "$tag" = "$target_tag" ]; then
             # 只处理 desktop/mobile/avatar，跳过其他
             case "$series" in
@@ -158,7 +164,7 @@ main() {
         echo -e "${BLUE}📝 更新时间戳文件...${NC}"
         
         # 移除该 tag 的记录
-        awk -F '|' -v tag="$target_tag" '!(($1 == "desktop" || $1 == "mobile" || $1 == "avatar") && $4 == tag)' "$timestamp_file" > "${timestamp_file}.tmp"
+        awk -F '|' -v tag="$target_tag" '!(($1 == "desktop" || $1 == "mobile" || $1 == "avatar") && $NF == tag)' "$timestamp_file" > "${timestamp_file}.tmp"
         mv "${timestamp_file}.tmp" "$timestamp_file"
         
         echo -e "${GREEN}✅ 时间戳文件已更新${NC}"
@@ -229,7 +235,7 @@ console.log(stats.releases.filter(release => release.tag === '$target_tag').leng
     echo ""
 
     # 6. 混合发布保留其他系列的 tag/release；纯静态发布沿用原清理行为。
-    if [ "$retained_release_count" -gt 0 ] || awk -F '|' -v tag="$target_tag" '$4 == tag && $1 != "desktop" && $1 != "mobile" && $1 != "avatar" { found = 1 } END { exit !found }' "$timestamp_file"; then
+    if [ "$retained_release_count" -gt 0 ] || awk -F '|' -v tag="$target_tag" '$NF == tag && $1 != "desktop" && $1 != "mobile" && $1 != "avatar" { found = 1 } END { exit !found }' "$timestamp_file"; then
         echo -e "${BLUE}🏷️  保留其他系列使用的 tag 和 release: ${target_tag}${NC}"
         previous_tag="$target_tag"
     else
@@ -251,7 +257,9 @@ console.log(stats.releases.filter(release => release.tag === '$target_tag').leng
     echo -e "${GREEN}========================================${NC}"
 
     # 输出结果供后续使用
-    echo "$previous_tag" > /tmp/rollback_result.txt
+    echo "$previous_tag" > "${ROLLBACK_RESULT_FILE:-/tmp/rollback_result.txt}"
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

@@ -305,7 +305,13 @@ check_timestamps_consistency() {
     }
 
     # 检查 timestamps 中的文件是否存在
-    while IFS='|' read -r series rel_path timestamp tag; do
+    while IFS= read -r record || [ -n "$record" ]; do
+        local tag="${record##*|}"
+        local head="${record%|*}"
+        local timestamp="${head##*|}"
+        local identity="${head%|*}"
+        local series="${identity%%|*}"
+        local rel_path="${identity#*|}"
         [ -z "$series" ] && continue
 
         local full_path="$project_root/wallpaper/$series/$rel_path"
@@ -324,4 +330,6 @@ check_timestamps_consistency() {
     [ $count -eq 0 ] && echo -e "${GREEN}✅ timestamps 一致性验证通过${NC}"
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi
