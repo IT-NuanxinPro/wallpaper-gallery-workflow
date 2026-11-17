@@ -7,7 +7,11 @@ import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 
 const require = createRequire(import.meta.url)
-const { getDerivativeNames, processPendingFile } = require('../process-metadata.js')
+const {
+  getDerivativeNames,
+  processPendingFile,
+  refreshProcessedAssetTags
+} = require('../process-metadata.js')
 const helper = path.resolve('scripts/lib/derivative-name.sh')
 
 test('same-stem image formats get distinct derivative paths', t => {
@@ -80,5 +84,12 @@ test('pending metadata refreshes only selected asset tags and preserves AI', t =
   assert.deepEqual(images[pngPath].ai, { keywords: ['原有'], description: '原有描述' })
   assert.equal(images[jpgPath].cdnTag, 'v1.5.20')
   assert.equal(images[jpgPath].ai.displayTitle, '夜色里的一束白玫瑰')
+  assert.equal(images[otherPath].cdnTag, 'v1.5.19')
+
+  images[pngPath].cdnTag = 'v1.5.19'
+  images[jpgPath].cdnTag = 'v1.5.19'
+  assert.equal(refreshProcessedAssetTags({ mobile: { images } }, [pngPath, jpgPath], 'v1.5.20'), 2)
+  assert.equal(images[pngPath].cdnTag, 'v1.5.20')
+  assert.equal(images[jpgPath].cdnTag, 'v1.5.20')
   assert.equal(images[otherPath].cdnTag, 'v1.5.19')
 })

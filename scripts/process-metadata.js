@@ -272,6 +272,36 @@ function saveMetadata(filePath, data) {
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8')
 }
 
+function assertDerivativeAssets(relativePath, series, images) {
+  const derivativeName = getDerivativeNames(Object.keys(images)).get(relativePath)
+  if (!derivativeName) {
+    throw new Error(`待刷新资源没有现有元数据: ${relativePath}`)
+  }
+  const relativeDir = path.posix.dirname(relativePath).replace(/^wallpaper\//, '')
+  for (const kind of series === 'avatar' ? ['thumbnail'] : ['thumbnail', 'preview']) {
+    const derivativePath = path.join(imageRepoRoot, kind, relativeDir, derivativeName)
+    if (!fs.existsSync(derivativePath)) {
+      throw new Error(`待刷新资源缺少 ${kind}: ${derivativePath}`)
+    }
+  }
+}
+
+function refreshProcessedAssetTags(metadataMap, paths, newTag) {
+  let refreshed = 0
+  for (const relativePath of paths) {
+    const series = relativePath.split('/')[1]
+    const images = metadataMap[series]?.images
+    const image = images?.[relativePath]
+    if (!image) continue
+    assertDerivativeAssets(relativePath, series, images)
+    if (image.cdnTag !== newTag) {
+      image.cdnTag = newTag
+      refreshed++
+    }
+  }
+  return refreshed
+}
+
 // 处理单个 pending 文件
 function processPendingFile(pendingFile, metadataMap, newTag) {
   const content = fs.readFileSync(pendingFile, 'utf-8')
@@ -286,18 +316,7 @@ function processPendingFile(pendingFile, metadataMap, newTag) {
 
   for (const image of pending.images || []) {
     if (image.refreshAssets !== true) continue
-    const derivativeName = getDerivativeNames(Object.keys(metadataMap[image.series].images))
-      .get(image.relativePath)
-    if (!derivativeName) {
-      throw new Error(`待刷新资源没有现有元数据: ${image.relativePath}`)
-    }
-    const relativeDir = path.posix.dirname(image.relativePath).replace(/^wallpaper\//, '')
-    for (const kind of image.series === 'avatar' ? ['thumbnail'] : ['thumbnail', 'preview']) {
-      const derivativePath = path.join(imageRepoRoot, kind, relativeDir, derivativeName)
-      if (!fs.existsSync(derivativePath)) {
-        throw new Error(`待刷新资源缺少 ${kind}: ${derivativePath}`)
-      }
-    }
+    assertDerivativeAssets(image.relativePath, image.series, metadataMap[image.series].images)
   }
 
   let processed = 0
@@ -766,12 +785,18 @@ async function main() {
   const syncedFromTimestamps = await syncFromTimestamps(timestampsFile, metadataMap, newTag)
   totalProcessed += syncedFromTimestamps
   console.log(`  从 timestamps 同步了 ${syncedFromTimestamps} 张图片`)
+  const processedAssetsFile = '/tmp/processed_images_list.txt'
+  const processedAssetPaths = fs.existsSync(processedAssetsFile)
+    ? fs.readFileSync(processedAssetsFile, 'utf-8').split('\n').filter(Boolean)
+    : []
+  const refreshedAssetTags = refreshProcessedAssetTags(metadataMap, processedAssetPaths, newTag)
+  console.log(`  刷新了 ${refreshedAssetTags} 张图片的资源标签`)
   console.log()
   console.log(`共处理 ${totalProcessed} 张图片`)
 
   // 保存更新后的 metadata 并生成前端数据
   // 有 pending 时也重新持久化，覆盖上次部分保存后重试的情况。
-  if (totalProcessed > 0 || forceRegenerate || processedFiles.length > 0) {
+  if (totalProcessed > 0 || refreshedAssetTags > 0 || forceRegenerate || processedFiles.length > 0) {
     if (forceRegenerate && totalProcessed === 0) {
       console.log()
       console.log('强制重新生成前端数据（metadata 可能已更新）...')
@@ -896,6 +921,7 @@ module.exports = {
   getDerivativeNames,
   processPendingFile,
   reconcileMetadataImagePath,
+  refreshProcessedAssetTags,
 }
 
 if (require.main === module) {

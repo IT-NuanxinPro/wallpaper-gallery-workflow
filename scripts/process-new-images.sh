@@ -254,6 +254,8 @@ main() {
     local failed_file="/tmp/failed_images.txt"
     rm -f "$failed_file"
     touch "$failed_file"
+    local processed_assets_file="/tmp/processed_images_list.txt"
+    : > "$processed_assets_file"
 
     # 获取新增图片列表（去重）
     local new_files=()
@@ -295,6 +297,7 @@ main() {
         echo -e "${BLUE}[$processed/$count]${NC} $file"
         if process_image "$file" "$project_root" "$im_cmd" "$font" "$failed_file"; then
             success_count=$((success_count + 1))
+            printf '%s\n' "$file" >> "$processed_assets_file"
         fi
         echo ""
     done
