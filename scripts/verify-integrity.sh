@@ -19,6 +19,8 @@
 
 set -e
 
+source "$(dirname "${BASH_SOURCE[0]}")/lib/derivative-name.sh"
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -130,15 +132,14 @@ check_orphan_originals() {
 
         while IFS= read -r -d '' img; do
             local rel_path="${img#$wallpaper_dir/}"
-            local filename=$(basename "$img")
-            local name="${filename%.*}"
+            local derivative_name=$(derivative_filename "$img")
             local dir_path=$(dirname "$rel_path")
 
             # 构建缩略图路径
             if [ "$dir_path" = "." ]; then
-                local thumb_path="$thumbnail_dir/${name}.webp"
+                local thumb_path="$thumbnail_dir/$derivative_name"
             else
-                local thumb_path="$thumbnail_dir/$dir_path/${name}.webp"
+                local thumb_path="$thumbnail_dir/$dir_path/$derivative_name"
             fi
 
             if [ ! -f "$thumb_path" ]; then
@@ -173,25 +174,13 @@ check_orphan_thumbnails() {
         while IFS= read -r -d '' thumb; do
             local rel_path="${thumb#$thumbnail_dir/}"
             local filename=$(basename "$thumb")
-            local name="${filename%.*}"
             local dir_path=$(dirname "$rel_path")
 
             # 反向查找原图（支持 jpg/jpeg/png）
-            local found=false
-            for ext in jpg jpeg png JPG JPEG PNG; do
-                if [ "$dir_path" = "." ]; then
-                    local orig_path="$wallpaper_dir/${name}.${ext}"
-                else
-                    local orig_path="$wallpaper_dir/$dir_path/${name}.${ext}"
-                fi
+            local source_dir="$wallpaper_dir"
+            [ "$dir_path" != "." ] && source_dir="$source_dir/$dir_path"
 
-                if [ -f "$orig_path" ]; then
-                    found=true
-                    break
-                fi
-            done
-
-            if [ "$found" = false ]; then
+            if ! original_exists_for_derivative "$source_dir" "$filename"; then
                 count=$((count + 1))
                 echo -e "${RED}❌ 孤儿缩略图: $thumb${NC}"
 
@@ -223,25 +212,13 @@ check_orphan_previews() {
         while IFS= read -r -d '' preview; do
             local rel_path="${preview#$preview_dir/}"
             local filename=$(basename "$preview")
-            local name="${filename%.*}"
             local dir_path=$(dirname "$rel_path")
 
             # 反向查找原图
-            local found=false
-            for ext in jpg jpeg png JPG JPEG PNG; do
-                if [ "$dir_path" = "." ]; then
-                    local orig_path="$wallpaper_dir/${name}.${ext}"
-                else
-                    local orig_path="$wallpaper_dir/$dir_path/${name}.${ext}"
-                fi
+            local source_dir="$wallpaper_dir"
+            [ "$dir_path" != "." ] && source_dir="$source_dir/$dir_path"
 
-                if [ -f "$orig_path" ]; then
-                    found=true
-                    break
-                fi
-            done
-
-            if [ "$found" = false ]; then
+            if ! original_exists_for_derivative "$source_dir" "$filename"; then
                 count=$((count + 1))
                 echo -e "${RED}❌ 孤儿预览图: $preview${NC}"
 

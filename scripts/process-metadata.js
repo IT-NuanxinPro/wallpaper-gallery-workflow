@@ -54,6 +54,21 @@ function compareWallpapers(a, b) {
   return String(a.filename || '').localeCompare(String(b.filename || ''))
 }
 
+function getDerivativeNames(paths) {
+  const counts = new Map()
+  for (const relativePath of paths) {
+    const stemPath = relativePath.replace(/\.[^./]+$/, '')
+    counts.set(stemPath, (counts.get(stemPath) || 0) + 1)
+  }
+
+  return new Map(paths.map(relativePath => {
+    const stemPath = relativePath.replace(/\.[^./]+$/, '')
+    const filename = path.posix.basename(relativePath)
+    const name = counts.get(stemPath) > 1 ? filename : path.posix.basename(stemPath)
+    return [relativePath, `${name}.webp`]
+  }))
+}
+
 function formatDateTime(date = new Date()) {
   const pad = value => String(value).padStart(2, '0')
 
@@ -269,6 +284,22 @@ function processPendingFile(pendingFile, metadataMap, newTag) {
     throw new Error(`静态链不处理 series: ${unknownSeries.join(', ')}；pending 文件已保留`)
   }
 
+  for (const image of pending.images || []) {
+    if (image.refreshAssets !== true) continue
+    const derivativeName = getDerivativeNames(Object.keys(metadataMap[image.series].images))
+      .get(image.relativePath)
+    if (!derivativeName) {
+      throw new Error(`待刷新资源没有现有元数据: ${image.relativePath}`)
+    }
+    const relativeDir = path.posix.dirname(image.relativePath).replace(/^wallpaper\//, '')
+    for (const kind of image.series === 'avatar' ? ['thumbnail'] : ['thumbnail', 'preview']) {
+      const derivativePath = path.join(imageRepoRoot, kind, relativeDir, derivativeName)
+      if (!fs.existsSync(derivativePath)) {
+        throw new Error(`待刷新资源缺少 ${kind}: ${derivativePath}`)
+      }
+    }
+  }
+
   let processed = 0
 
   for (const image of pending.images || []) {
@@ -356,6 +387,7 @@ function processPendingFile(pendingFile, metadataMap, newTag) {
         (newAI.displayTitle && !existingAI.displayTitle)
       )
       
+      let updated = false
       if (shouldUpdateAI && newAI.keywords && newAI.keywords.length > 0) {
         // 合并 AI 数据
         const mergedAI = {
@@ -374,8 +406,17 @@ function processPendingFile(pendingFile, metadataMap, newTag) {
         }
         
         existingImage.ai = mergedAI
+        updated = true
+      }
+
+      if (image.refreshAssets === true) {
+        existingImage.cdnTag = newTag
+        updated = true
+      }
+
+      if (updated) {
         processed++
-        console.log(`    ↻ ${key} (合并 AI 数据)`)
+        console.log(`    ↻ ${key} (更新元数据)`)
       } else {
         console.log(`    跳过 ${key} (已存在，AI 数据无需更新)`)
       }
@@ -417,12 +458,14 @@ function generateFrontendData(metadataMap, dataDir, newTag) {
     }
     metadata.images = reconciledImages
 
+    const derivativeNames = getDerivativeNames(Object.keys(metadata.images))
+
     for (const [relativePath, data] of Object.entries(metadata.images)) {
       // 解析路径获取前端需要的格式
       // relativePath: wallpaper/desktop/动漫/原神/xxx.jpg
       const parts = relativePath.split('/')
       const filename = parts.pop()
-      const filenameNoExt = filename.replace(/\.[^.]+$/, '')
+      const derivativeName = derivativeNames.get(relativePath)
       const pathParts = parts.slice(2) // 去掉 wallpaper/series
 
       // 构建路径（保持与 generate-data.js 一致）
@@ -431,11 +474,11 @@ function generateFrontendData(metadataMap, dataDir, newTag) {
 
       let thumbnailPath, previewPath
       if (subdir) {
-        thumbnailPath = `/thumbnail/${series}/${subdir}/${encodeURIComponent(filenameNoExt)}.webp`
-        previewPath = series !== 'avatar' ? `/preview/${series}/${subdir}/${encodeURIComponent(filenameNoExt)}.webp` : null
+        thumbnailPath = `/thumbnail/${series}/${subdir}/${encodeURIComponent(derivativeName)}`
+        previewPath = series !== 'avatar' ? `/preview/${series}/${subdir}/${encodeURIComponent(derivativeName)}` : null
       } else {
-        thumbnailPath = `/thumbnail/${series}/${encodeURIComponent(filenameNoExt)}.webp`
-        previewPath = series !== 'avatar' ? `/preview/${series}/${encodeURIComponent(filenameNoExt)}.webp` : null
+        thumbnailPath = `/thumbnail/${series}/${encodeURIComponent(derivativeName)}`
+        previewPath = series !== 'avatar' ? `/preview/${series}/${encodeURIComponent(derivativeName)}` : null
       }
 
       const wallpaperData = {
@@ -850,6 +893,8 @@ function extractKeywordsFromFilename(filename) {
 module.exports = {
   findActualImagePath,
   generateFrontendData,
+  getDerivativeNames,
+  processPendingFile,
   reconcileMetadataImagePath,
 }
 

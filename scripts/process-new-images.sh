@@ -13,6 +13,8 @@
 
 set -e
 
+source "$(dirname "${BASH_SOURCE[0]}")/lib/derivative-name.sh"
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -97,15 +99,14 @@ get_new_images_by_scan() {
         
         while IFS= read -r -d '' img; do
             local rel_path="${img#$wallpaper_dir/}"
-            local filename=$(basename "$img")
-            local name="${filename%.*}"
+            local derivative_name=$(derivative_filename "$img")
             local dir_path=$(dirname "$rel_path")
             
             # 检查缩略图是否存在
             if [ "$dir_path" = "." ]; then
-                local thumb_path="$thumbnail_dir/${name}.webp"
+                local thumb_path="$thumbnail_dir/$derivative_name"
             else
-                local thumb_path="$thumbnail_dir/$dir_path/${name}.webp"
+                local thumb_path="$thumbnail_dir/$dir_path/$derivative_name"
             fi
             
             if [ ! -f "$thumb_path" ]; then
@@ -130,7 +131,7 @@ process_image() {
     local rest="${rel_to_wallpaper#*/}"               # 动漫/原神/xxx.jpg
 
     local filename=$(basename "$src_file")
-    local name="${filename%.*}"
+    local derivative_name=$(derivative_filename "$project_root/$src_file")
     local dir_path=$(dirname "$rest")  # 动漫/原神
 
     local full_src="$project_root/$src_file"
@@ -150,7 +151,7 @@ process_image() {
     [ "$series" != "avatar" ] && mkdir -p "$preview_dir"
 
     # 生成缩略图（带水印）
-    local dest_thumbnail="$thumbnail_dir/${name}.webp"
+    local dest_thumbnail="$thumbnail_dir/$derivative_name"
     if [ ! -f "$dest_thumbnail" ]; then
         local thumb_font_size=$((THUMBNAIL_WIDTH * 2 / 100))
         local watermark_alpha=$(awk "BEGIN {printf \"%.2f\", $WATERMARK_OPACITY / 100}")
@@ -205,7 +206,7 @@ process_image() {
             preview_quality=$MOBILE_PREVIEW_QUALITY
         fi
 
-        local dest_preview="$preview_dir/${name}.webp"
+        local dest_preview="$preview_dir/$derivative_name"
         if [ ! -f "$dest_preview" ]; then
             if ! $im_cmd "$full_src" \
                 -resize "${preview_width}x>" \
